@@ -1,0 +1,214 @@
+DESCRIPTION: 
+
+The data is a subset of the The National 2009 H1N1 Flu Survey data.
+
+The National 2009 H1N1 Flu Survey (NHFS) was sponsored by the 
+National Center for Immunization and Respiratory Diseases 
+(NCIRD) and conducted jointly by NCIRD and the National 
+Center for Health Statistics (NCHS), Centers for Disease 
+Control and Prevention (CDC). The NHFS was a list-assisted 
+random-digit-dialing telephone survey of households, designed
+to monitor influenza immunization coverage in the 2009-10 season.
+
+The target population for the NHFS was all persons 6 months or
+older living in the United States at the time of the 
+interview. Data from the NHFS were used to produce timely estimates 
+of vaccination coverage rates for both the monovalent pH1N1 and
+trivalent seasonal influenza vaccines.
+
+For more information, see:
+http://www.cdc.gov/nchs/nis/about_nis.htm#h1n1
+
+ORIGINAL SIZE: 26 707, 38 variables
+
+ItDS TRAINING SIZE: 20 031 observations, 29 variables
+
+ItDS TEST SIZE: 6 676 observations, 28 variables (i.e., outcome variable is left out)
+
+
+VARIABLES:
+
+respondent_id (Numeric): Respondent ID.	
+
+h1n1_concern (Ordinal): Level of concern about the H1N1 flu.
+		
+	Not at all concerned
+	Not very concerned
+	Somewhat concerned
+	Very concerned
+  
+h1n1_knowledge (Ordinal):Knowledge level about H1N1 flu.
+
+  No knowledge
+  A little knowledge
+  A lot of knowledge
+
+behavioral_antiviral_meds (Nominal): Taking antiviral medications.
+  
+  Yes
+  No
+		
+behavioral_avoidance  (Nominal): Avoid close contact with others with flulike symptoms. 
+
+  Yes
+  No
+       
+behavioral_face_mask (Nominal): Bought a face mask.
+
+  Yes
+  No
+
+behavioral_wash_hands (Nominal): Washing hands.
+
+  Yes
+  No
+	
+behavioral_large_gatherings (Nominal): Reduced time at large gatherings.
+
+  Yes
+  No
+
+			
+behavioral_outside_home (Nominal): Reduced contact outside the home.
+	
+  Yes
+  No
+
+	
+behavioral_touch_face (Nominal): Avoid touching eyes, nose, or mouth.
+		
+  Yes
+  No
+
+	
+doctor_recc_h1n1 (Nominal): Doctor's recommendation for H1N1 vaccine.
+	
+       One_Story	One story
+       Two_Story	Two story
+       Other      See documentation for original data
+	
+chronic_med_condition (Nominal): Chronical medical condition (including asthma or other lung conditions, diabetes, heart or kidney conditions, anemia etc).
+
+  Yes
+  No
+		
+child_under_6_months (Nominal): Close contact with child under 6 months.
+
+  Yes
+  No
+
+
+health_worker (Nominal): Works in health care.
+
+  Yes
+  No
+
+opinion_h1n1_vacc_effective (Ordinal): Effectiveness of the H1N1 vaccine.
+
+  Not at all effective
+  Not very effective
+  Don't know
+  Somewhat effective
+  Very effective
+		
+opinion_h1n1_risk (Ordinal): Risk of getting sick with H1N1 flu without vaccine.
+
+  Very low
+  Somewhat low
+  Don't know
+  Somewhat high
+  Very high
+
+	
+opinion_h1n1_sick_from_vacc (Ordinal): Worry about getting sick from the H1N1 vaccine.
+
+  Not at all worried
+  Not very worried
+  Don't know
+  Somewhat worried
+  Very worried
+	
+age_group (Ordinal): Age group.
+
+  18 - 34 Years
+  35 - 44 Years
+  45 - 54 Years
+  55 - 64 Years
+  65+ Years
+		
+education (Ordinal): Self-reported education level.
+		
+  < 12 Years
+  12 Years
+  Some College
+  College Graduate
+
+race (Nominal): Race.
+		
+  Black 
+  Hispanic 
+  White 
+  Other or Multiple
+
+sex (Nominal): Gender.
+
+  Female 
+  Male
+
+marital_status (Nominal): Marital status.
+
+  Married 
+  Not Married
+		
+rent_or_own (Nominal): Home rented or owned.
+
+  Own
+  Rent
+
+employment_status (Nominal): Work status.
+
+  Employed
+  Unemployed
+  Not in Labor Force
+ 
+hhs_geo_region (Nominal): Department of Health and Human Services (HHS) surveillance region of residence.
+
+  atmpeygn
+  bhuqouqj
+  dqpwygqj
+  fpwskwrf
+  kbazzjca
+  lrircsnp
+  lzgpxyit
+  mlyzmhmf 
+  oxchjgsf 
+  qufhixun
+
+census_msa (Nominal): Census region of residence.
+
+  MSA, Not Principle City 
+  MSA, Principle City 
+  Non-MSA
+
+household_adults (Ordinal): Number of adults in the household.
+
+  0
+  1
+  2
+  3 or more
+
+household_children (Ordinal): Number of children in the household.
+
+  0
+  1
+  2
+  3 or more
+
+h1n1_vaccine (Nominal): H1N1 vaccine received.
+
+  Yes 
+  No
+  
+  
+  
+  
