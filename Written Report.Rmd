@@ -1,0 +1,454 @@
+---
+title: 'Report title'
+output:
+  html_notebook:
+    theme: flatly
+    toc: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+author: 'Author name'    
+date: "`r format(Sys.time(), '%d %B, %Y')`"    
+---
+
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+```
+
+
+```{r, include = FALSE, message=FALSE}
+library(webshot)
+if(is_phantomjs_installed() == FALSE){
+  install_phantomjs()
+}
+library(tidymodels)
+library(tidyverse)
+library(inspectdf)
+library(skimr)
+library(table1)
+library(kableExtra)
+library(glmnet)
+library(kknn)
+library(ranger)
+library(xgboost)
+library(vip)
+```
+
+
+## Problem description
+
+Describe the problem you are trying to solve and why it is worth solving.
+
+## Brief introduction to the data
+
+Write a short paragraph describing the data you are using, including where the data came from.
+
+## Data exploration
+
+Describe and explore the data using R, using tables, graphics etc.
+
+```{r} 
+load("train_predictors_outcome.RData")
+load("test_predictors.RData")
+
+#Still missing values?
+show_plot(inspect_na(train_predictors_outcome))
+```
+
+```{r}
+train_predictors_outcome %>% 
+  count(h1n1_vaccine) %>% 
+  mutate(prop = n/sum(n))
+
+```
+
+```{r}
+set.seed(82734)
+
+#Make a recipe for how the imputation will be done (specify the imputation model)
+impute_recipe <- recipe(h1n1_vaccine ~ ., data = train_predictors_outcome) %>% #Use hotels_train data with children as outcome and the others as predictors
+update_role(respondent_id, new_role = "ID") %>%
+  step_knnimpute(all_predictors(), neighbors = 10) # Use step_knnimpute with 3 neighbors as imputatition method
+
+#Prep the hotels_train data using the imputation recipe
+impute_prep <- prep(impute_recipe, training = train_predictors_outcome)
+
+#Bake (compute/retrieve) the imputed data by using the prep above on the data
+
+
+train_imp <- bake(impute_prep, train_predictors_outcome)
+#Save for later
+save(train_imp, file = "train_imp.RData") 
+
+```
+
+```{r}
+show_plot(inspect_na(train_imp))
+```
+
+
+```{r}
+########################################################################
+#  RECIPE FOR PREPROCESSING
+#######################################################################
+train_rec <- 
+  recipe(h1n1_vaccine ~ ., data = train_imp) %>% 
+  update_role(respondent_id, new_role = "ID")%>% #
+  step_normalize(all_numeric()) %>% #Center and scale all numeric variables
+  step_dummy(all_nominal(), -h1n1_vaccine) %>% #Recode all factors
+  themis::step_downsample(h1n1_vaccine) #Downsample the majority class to have a more balanced outcome
+```
+
+
+## Analysis
+
+Describe the analysis. State which prediction methods/models you are implementing. Describe the setup of the analysis, including any sample splitting, resampling strategy, metric used for evaluating a prediction strategy.
+
+```{r} 
+########################################################################
+# CREATE CROSS-VALIDATION FOLDS FOR MODEL EVALUATION/COMPARISON
+########################################################################
+#Prepare for 10-fold cross-validation, observations selected into folds with random 
+#sampling stratified on outcome
+set.seed(5000)
+folds <- vfold_cv(train_imp, v = 10, strata = h1n1_vaccine)
+
+
+########################################################################
+# EVALUATION METRICS
+########################################################################
+#Which metrics should be computed?
+my_metrics <- metric_set(roc_auc, precision, recall, specificity, accuracy, bal_accuracy, f_meas)
+```
+
+```{r, warning=FALSE}
+########################################################################
+# MODELLING
+########################################################################
+########################################
+# MODEL 1: Logistic regression
+########################################
+
+#Model specification
+lr_mod <-
+  logistic_reg() %>%
+  set_engine("glm")
+
+#Work flow: Which model to use and how data should be preprocessed
+lr_wflow <-
+  workflow() %>%
+  add_model(lr_mod) %>%
+  add_recipe(train_rec)
+
+#Use the workflow and folds object to fit model on cross-validation resamples
+lr_fit_rs <- 
+  lr_wflow %>% 
+  fit_resamples(folds, metrics = my_metrics, control = control_resamples(save_pred = TRUE))
+
+#Get mean out-of-sample performance measures
+lr_metrics <- collect_metrics(lr_fit_rs)
+lr_metrics
+
+#Store part of the metrics object for later comparison with other models
+lr_metrics_sub <- lr_metrics[ , c(1,3,5)]
+lr_metrics_sub <- lr_metrics_sub %>% 
+  pivot_longer(!.metric, names_to = "measure", values_to = ".estimate")
+
+#Fit the above logistic regression model on the full training data
+lr_fit_train <- 
+  lr_wflow %>%
+  fit(data = train_imp)
+
+#Look at the model summary
+summary(lr_fit_train$fit$fit$fit)
+
+#Get the predicted class probabilities computed for the full training data
+lr_pred_prob_train <- predict(lr_fit_train , type = "prob", new_data =  train_imp)
+#Get the receiver operator curve (ROC) computed for the full training data
+lr_train_roc <- roc_curve(tibble(h1n1_vaccine = train_imp$h1n1_vaccine, lr_pred_prob_train), truth = h1n1_vaccine, estimate =.pred_Yes) %>% 
+  mutate(model = "Log_reg")
+
+#When you have test data without outcome
+lr_pred_class_test_no_outcome <- predict(lr_fit_train , type = "class", new_data =  test_predictors)
+lr_pred_prob_test_no_outcome <- predict(lr_fit_train , type = "prob", new_data =  test_predictors)
+```
+```{r}
+############################################################
+#CREATE CROSS-VALIDATION FOLDS FOR HYPERPARAMETER TUNING
+###########################################################
+#Prepare for hyperparameter selection by 10-fold cross-validation, observations selected into folds with random 
+#sampling stratified on outcome
+set.seed(1981)
+tune_folds <- vfold_cv(train_imp, v = 10, strata = h1n1_vaccine)
+
+#Set metric for choosing hyperparameter
+roc_res <- metric_set(roc_auc)
+```
+
+
+```{r, warning=FALSE}
+################################################
+# MODEL 2: Penalized logistic regression (LASSO)
+################################################
+
+#Model specification
+penlr_mod <- 
+  logistic_reg(mixture = 1, penalty = tune()) %>% #Specify that we want to tune the penalty parameter
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+#Set up workflow
+penlr_wflow <-
+  workflow() %>%
+  add_model(penlr_mod) %>%
+  add_recipe(train_rec)
+
+#Get a parameter object for our data and model specification. Contains information about possible values, ranges, types etc.
+penlr_param <-
+  penlr_wflow %>%
+  parameters() %>% 
+  finalize(train_imp)
+
+#Look at the range for the penalty parameter
+penlr_param%>% pull_dials_object("penalty")
+
+
+
+#Tune the model: Set up a grid of penalty values to be evalutated and select the optimal penalty value (in terms of AUROC)
+set.seed(666)
+ penlr_tune <-
+   penlr_wflow %>%
+   tune_grid(
+     tune_folds,
+     grid = penlr_param %>% grid_regular(levels = c(penalty = 100)),
+     metrics = roc_res
+   )
+
+save(penlr_tune, file = "penlr_tune.RData")
+#load("penlr_tune.RData")
+
+#View plot of penalty values vs. AUROC
+autoplot(penlr_tune) + theme(legend.position = "top")
+
+#View the penalty values with largest AUROC
+show_best(penlr_tune) %>% select(-.estimator)
+
+#Store the best penalty value
+penlr_best_param <- select_best(penlr_tune, "roc_auc")
+
+#Set up the final workflow using the best penalty value
+final_penlr_wflow <- 
+  penlr_wflow %>% 
+  finalize_workflow(penlr_best_param)
+
+#View the workflow specifiations
+final_penlr_wflow
+
+#Fit the final model on the cross-validation folds set up for model evaluation/comparison
+penlr_fit_rs <- 
+  final_penlr_wflow %>% 
+  fit_resamples(folds, metrics = my_metrics, control = control_resamples(save_pred = TRUE))
+
+#Get mean out-of-sample performance measures
+penlr_metrics <- collect_metrics(penlr_fit_rs)
+penlr_metrics
+
+#Store part of the metrics object for later comparison with other models
+penlr_metrics_sub <- penlr_metrics[, c(1,3,5)]
+penlr_metrics_sub <- penlr_metrics_sub %>% 
+  pivot_longer(!.metric, names_to = "measure", values_to = "estimate")
+
+
+#Fit the final model on the full training data
+penlr_fit_train <- 
+  final_penlr_wflow %>%
+  fit(data = train_imp)
+
+
+#Look at variable importance
+penlr_fit_train%>% 
+  pull_workflow_fit() %>% 
+  vip(lambda = penlr_best_param$penalty, num_features = 200)
+
+
+#Get the model coefficients
+penlr_coeff <- data.frame(penlr_fit_train %>%
+                            pull_workflow_fit() %>%
+                            tidy())
+
+#Number of non-zero coefficients
+sum(penlr_coeff$estimate != 0)
+
+#Number of zero coefficients
+sum(penlr_coeff$estimate == 0)
+
+
+#Get the predicted class probabilities computed for the full training data
+penlr_pred_prob_train <- predict(penlr_fit_train , type = "prob", new_data =  train_imp)
+#Get the receiver operator curve (ROC) computed for the full training data
+penlr_train_roc <- roc_curve(tibble(h1n1_vaccine = train_imp$h1n1_vaccine, penlr_pred_prob_train), truth = h1n1_vaccine, estimate =.pred_Yes)  %>% 
+  mutate(model = "Pen_log_reg")
+
+penlr_pred_class_test_no_outcome <- predict(penlr_fit_train , type = "class", new_data =  test_predictors)
+penlr_pred_prob_test_no_outcome <- predict(penlr_fit_train , type = "prob", new_data =  test_predictors)
+
+```
+
+
+```{r, warning=FALSE}
+################################################
+# MODEL 3: Nearest neighbors
+################################################
+
+#Model specification
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>% #Specify that we want to tune the neighbors parameter
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+#Work flow: Which model to use and how data should be preprocessed
+knn_wflow <-
+  workflow() %>%
+  add_model(knn_mod) %>%
+  add_recipe(train_rec)
+
+#Get a parameter object for our data and model specification
+knn_param <- 
+  knn_wflow %>% 
+  parameters() %>% 
+  finalize(train_imp)
+
+#Look at the range for the neighbor parameter
+knn_param%>% pull_dials_object("neighbors")
+
+#Update the range for possible neighbor values
+knn_param <- 
+  knn_wflow %>% 
+  parameters() %>% 
+  update(neighbors = neighbors(c(1, 500))) %>% 
+  finalize(train_imp)
+
+#Look at the updated range for the neighbor parameter
+knn_param%>% pull_dials_object("neighbors")
+
+
+#Tune the model: Set up a grid of neighbor values to be evalutated and select the optimal number of neighbors (in terms of AUROC)
+ set.seed(9923323)
+ knn_tune <-
+   knn_wflow %>%
+   tune_grid(
+     tune_folds,
+     grid = knn_param %>% grid_regular(levels = c(neighbors = 20)),
+     metrics = roc_res
+   )
+
+
+save(knn_tune, file = "knn_tune.RData")
+#load("knn_tune.RData")
+
+#View plot of number of neighbors vs. AUROC
+autoplot(knn_tune) + theme(legend.position = "top")
+
+#View the number of neighbors with largest AUROC
+show_best(knn_tune) %>% select(-.estimator)
+
+#Store the best neighbor value
+knn_best_param <- select_best(knn_tune, "roc_auc")
+
+#Set up the final workflow using the best neighbor value
+final_knn_wflow <- 
+  knn_wflow %>% 
+  finalize_workflow(knn_best_param)
+
+#Fit the final model on the cross-validation folds set up for model evaluation/comparison
+knn_fit_rs <- 
+  final_knn_wflow %>% 
+  fit_resamples(folds, metrics = my_metrics, control = control_resamples(save_pred = TRUE))
+
+#Get mean out-of-sample performance, measured as accuracy and area under the receiver operator curve (AUROC)
+knn_metrics <- collect_metrics(knn_fit_rs)
+knn_metrics
+
+
+#Store some of the results for later comparison with other models
+knn_metrics_sub <- knn_metrics[ , c(1,3,5)]
+knn_metrics_sub <- knn_metrics_sub %>% 
+  pivot_longer(!.metric, names_to = "measure", values_to = "estimate")
+
+
+#Fit the final model on the full training data
+knn_fit_train <- 
+  final_knn_wflow %>%
+  fit(data = train_imp)
+
+#Get the predicted class probabilities computed for the full training data
+knn_pred_prob_train <- predict(knn_fit_train , type = "prob", new_data =  train_imp)
+#Get the receiver operator curve (ROC) computed for the full training data
+knn_train_roc <- roc_curve(tibble(h1n1_vaccine = train_imp$h1n1_vaccine, penlr_pred_prob_train), truth = h1n1_vaccine, estimate =.pred_Yes)  %>% 
+  mutate(model = "KNN")
+
+
+#Get predicted class (outcome) and class probabilities for the test data
+#When you have test data with outcome
+#knn_pred_class_test <- predict(knn_fit_train , type = "class", new_data =  test_imp)
+#knn_pred_prob_test <- predict(knn_fit_train , type = "prob", new_data =  test_imp)
+#When you have test data without outcome
+knn_pred_class_test_no_outcome <- predict(knn_fit_train , type = "class", new_data =  test_predictors)
+knn_pred_prob_test_no_outcome <- predict(knn_fit_train , type = "prob", new_data =  test_predictors)
+```
+
+```{r}
+################################################
+# MODEL 4: Random forest
+################################################
+
+#Preprocessing without creating dummies
+train_rec_rf <-
+
+  recipe(h1n1_vaccine ~ ., data = train_imp) %>% 
+  update_role(respondent_id, new_role = "ID")%>% #
+  step_normalize(all_numeric()) %>% #Center and scale all numeric 
+  themis::step_downsample(h1n1_vaccine)
+
+#Model specification
+rf_mod <-
+  rand_forest(mtry = tune(), trees = tune()) %>% #Specify that we want to tune both the mtry and trees parameters
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+#Work flow: Which model to use and how data should be preprocessed
+rf_wflow <-
+  workflow() %>%
+  add_model(rf_mod) %>%
+  add_recipe(train_rec_rf)
+
+#Get a parameter object for our data and model specification, where we also update the ranges of mtry and trees
+rf_param <-
+  rf_wflow %>%
+  parameters() %>%
+  update(mtry = mtry(c(1, 16))) %>%
+  update(trees = trees(c(500, 1500))) %>%
+  finalize(train_imp)
+
+
+#Tune the model
+ set.seed(911)
+ rf_tune <-
+   rf_wflow %>%
+   tune_grid(
+     tune_folds,
+     grid = rf_param %>% grid_regular(levels = c(mtry = 4, trees = 3)),
+    metrics = roc_res
+  )
+save(rf_tune, file = "rf_tune.RData")
+```
+
+
+
+
+
+
